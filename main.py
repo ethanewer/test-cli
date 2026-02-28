@@ -66,7 +66,7 @@ IMPORTANT: The text inside "keystrokes" will be used completely verbatim as keys
  - C-c for Ctrl+C
  - C-d for Ctrl+D
 
-It is better to set a smaller duration than a longer duration. It is always possible to wait again if the prior output has not finished, by running {"keystrokes": "", "duration": 10.0} on subsequent requests to wait longer. Never wait longer than 60 seconds; prefer to poll to see intermediate result status.
+It is better to set a smaller duration than a longer duration. It is always possible to wait again if the prior output has not finished, by running {"keystrokes": "", "duration": 10.0} on subsequent requests to wait longer. Never wait longer than the configured max wait; prefer to poll to see intermediate result status.
 """
 
 
@@ -78,6 +78,7 @@ class Config:
     verbosity: int = 1
     temperature: float = 0.7
     max_turns: int = 50
+    max_wait_seconds: float = 60.0
 
 
 @dataclass
@@ -107,6 +108,7 @@ def load_config(path: Path) -> Config:
         verbosity=int(data.get("verbosity", 1)),
         temperature=float(data.get("temperature", 0.7)),
         max_turns=int(data.get("max_turns", 50)),
+        max_wait_seconds=float(data.get("max_wait_seconds", 60.0)),
     )
 
 
@@ -191,7 +193,7 @@ def parse_response(text: str) -> ParsedResponse:
         if not isinstance(keystrokes, str):
             raise ValueError(f"Command {i + 1} 'keystrokes' must be a string")
         duration = float(command.get("duration", 1.0))
-        commands.append(Command(keystrokes=keystrokes, duration=min(duration, 60.0)))
+        commands.append(Command(keystrokes=keystrokes, duration=max(duration, 0.0)))
 
     task_complete = _coerce_task_complete(data.get("task_complete", False))
 
@@ -270,9 +272,10 @@ def suppress_stdio_fd() -> Any:
         os.close(devnull)
 
 
-def build_prompt(instruction: str, terminal_state: str) -> str:
+def build_prompt(instruction: str, terminal_state: str, max_wait_seconds: float) -> str:
     return (
         f"{SYSTEM_PROMPT}\n\n"
+        f"Max wait per command: {max_wait_seconds} seconds.\n\n"
         f"Task Description:\n{instruction}\n\n"
         f"Current terminal state:\n{terminal_state}"
     )
@@ -338,10 +341,11 @@ def start_shell() -> pexpect.spawn:
     return child
 
 
-def execute_command(child: pexpect.spawn, cmd: Command) -> str:
+def execute_command(child: pexpect.spawn, cmd: Command, max_wait_seconds: float) -> str:
+    effective_wait = min(max(cmd.duration, 0.0), max(max_wait_seconds, 0.1))
     # Keep explicit wait commands predictable.
     if cmd.keystrokes == "":
-        time.sleep(max(cmd.duration, 0.0))
+        time.sleep(effective_wait)
         return ""
 
     if cmd.keystrokes.strip() == "C-c":
@@ -357,7 +361,7 @@ def execute_command(child: pexpect.spawn, cmd: Command) -> str:
         else:
             child.send(keystrokes)
 
-    timeout = max(2.0, cmd.duration + 2.0)
+    timeout = min(max(cmd.duration, 0.0) + 2.0, max(max_wait_seconds, 0.1))
     try:
         child.expect_exact(PROMPT_SENTINEL, timeout=timeout)
         raw_output = child.before or ""
@@ -527,11 +531,15 @@ def _append_turn_history(
 
 
 def _execute_turn_commands(
-    console: Console, child: pexpect.spawn, parsed: ParsedResponse, verbosity: int
+    console: Console,
+    child: pexpect.spawn,
+    parsed: ParsedResponse,
+    verbosity: int,
+    max_wait_seconds: float,
 ) -> str:
     combined_output_parts: list[str] = []
     for cmd in parsed.commands:
-        output = execute_command(child, cmd)
+        output = execute_command(child, cmd, max_wait_seconds)
         render_command_output(console, cmd, output, verbosity)
         if output:
             combined_output_parts.append(output)
@@ -562,7 +570,7 @@ def run_agent(
     pending_completion = False
     pending_final_message: str | None = None
     terminal_state = "Current Terminal Screen:\n(empty)"
-    prompt = build_prompt(instruction, terminal_state)
+    prompt = build_prompt(instruction, terminal_state, cfg.max_wait_seconds)
 
     try:
         for turn in range(1, cfg.max_turns + 1):
@@ -585,7 +593,9 @@ def run_agent(
                 continue
 
             render_response(console, turn, parsed, verbosity)
-            terminal_output = _execute_turn_commands(console, child, parsed, verbosity)
+            terminal_output = _execute_turn_commands(
+                console, child, parsed, verbosity, cfg.max_wait_seconds
+            )
 
             if parsed.task_complete:
                 if parsed.final_message and parsed.final_message.strip():
@@ -725,7 +735,8 @@ def main() -> None:
             f"Model: {config.model}\n"
             f"API Base: {config.api_base}\n"
             f"Verbosity: {args.verbosity}\n"
-            f"Max Turns: {config.max_turns}",
+            f"Max Turns: {config.max_turns}\n"
+            f"Max Wait: {config.max_wait_seconds}s",
             title="Terminus-2 Wrapper",
             border_style="cyan",
         )

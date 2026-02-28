@@ -30,7 +30,8 @@ Model and API settings live in `config.json` (which is gitignored):
   "api_base": "https://openrouter.ai/api/v1",
   "api_key": "$OPENROUTER_API_KEY",
   "temperature": 0.7,
-  "max_turns": 50
+  "max_turns": 50,
+  "max_wait_seconds": 60
 }
 ```
 
@@ -39,6 +40,7 @@ Model and API settings live in `config.json` (which is gitignored):
 - `api_key`: API key string or env reference like `$OPENROUTER_API_KEY`
 - `temperature`: sampling temperature
 - `max_turns`: maximum model turns before stopping
+- `max_wait_seconds`: max time to wait for each tool call/command completion
 
 ## Install
 

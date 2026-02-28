@@ -4,5 +4,6 @@
   "api_key": "",
   "verbosity": 1,
   "temperature": 0.7,
-  "max_turns": 50
+  "max_turns": 50,
+  "max_wait_seconds": 60
 }
