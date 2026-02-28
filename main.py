@@ -151,14 +151,18 @@ def extract_json_content(response: str) -> str:
         if char == "\\":
             escape_next = True
             continue
+
         if char == '"' and not escape_next:
             in_string = not in_string
             continue
+
         if in_string:
             continue
+
         if char == "{":
             if brace_count == 0:
                 json_start = i
+
             brace_count += 1
         elif char == "}":
             brace_count -= 1
@@ -211,16 +215,20 @@ def parse_response(text: str) -> ParsedResponse:
 def _coerce_task_complete(value: Any) -> bool:
     if isinstance(value, bool):
         return value
+
     if isinstance(value, str):
         return value.lower() in {"true", "1", "yes"}
+
     return False
 
 
 def _normalized_final_message(value: Any) -> str | None:
     if value is None:
         return None
+
     if isinstance(value, str):
         return value
+
     raise ValueError("'final_message' must be a string when provided")
 
 
@@ -238,17 +246,21 @@ def normalize_command_output(output: str, command: Command) -> str:
         stripped = line.strip()
         if not stripped:
             continue
+
         if stripped in {PROMPT_SENTINEL.strip(), "%", "'", '"'}:
             continue
+
         if stripped.startswith("%"):
-            # zsh prompt/echo artifacts
             continue
+
         if command_line and stripped == command_line:
             continue
+
         if stripped.startswith(PROMPT_SENTINEL):
             stripped = stripped.removeprefix(PROMPT_SENTINEL).strip()
             if not stripped:
                 continue
+
         normalized_lines.append(stripped)
 
     return "\n".join(normalized_lines).strip()
@@ -516,6 +528,7 @@ def get_post_run_final_message(
         response = call_model(cfg, post_run_summary_prompt(), history, api_key).strip()
     except Exception:
         return None
+
     return response or None
 
 
