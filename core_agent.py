@@ -140,17 +140,22 @@ def extract_json_content(response: str) -> str:
         if escape_next:
             escape_next = False
             continue
+
         if char == "\\":
             escape_next = True
             continue
+
         if char == '"':
             in_string = not in_string
             continue
+
         if in_string:
             continue
+
         if char == "{":
             if brace_count == 0:
                 json_start = i
+
             brace_count += 1
         elif char == "}":
             brace_count -= 1
