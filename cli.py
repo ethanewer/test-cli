@@ -442,7 +442,7 @@ def _display_width(console: Console) -> int:
 
 
 def _render_labeled_fixed(
-    console: Console, width: int, label: str, label_style: str, content: str
+    console: Console, width: int, label: str, label_style: str, content: str,
 ) -> None:
     content_width = max(10, width - len(label))
     lines = content.splitlines() or [""]
@@ -548,9 +548,10 @@ def _render_command_output(
 
 
 def _render_issue_output(
-    console: Console, kind: str, message: str, verbosity: int
+    console: Console, kind: str, message: str, verbosity: int,
 ) -> None:
-    if verbosity == 0:
+    # Always surface fatal model-call failures, even in quiet mode.
+    if verbosity == 0 and kind != "model":
         return
 
     width = _display_width(console)
