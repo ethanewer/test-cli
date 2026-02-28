@@ -377,7 +377,7 @@ def execute_command(child: pexpect.spawn, cmd: Command, max_wait_seconds: float)
     except pexpect.TIMEOUT:
         raw_output = child.before or ""
 
-    return normalize_command_output(raw_output, cmd)
+    return normalize_command_output(output=raw_output, command=cmd)
 
 
 def completion_confirmation_message(terminal_output: str) -> str:
@@ -411,7 +411,11 @@ def _execute_turn_commands(
 ) -> str:
     combined_output_parts: list[str] = []
     for cmd in parsed.commands:
-        output = execute_command(child, cmd, max_wait_seconds)
+        output = execute_command(
+            child=child,
+            cmd=cmd,
+            max_wait_seconds=max_wait_seconds,
+        )
         if callbacks.on_command_output:
             callbacks.on_command_output(cmd, output)
 
@@ -434,7 +438,7 @@ def run_agent(
     pending_completion = False
     pending_final_message: str | None = None
     prompt = build_prompt(
-        instruction,
+        instruction=instruction,
         terminal_state="Current Terminal Screen:\n(empty)",
         max_wait_seconds=cfg.max_wait_seconds,
     )
@@ -442,13 +446,22 @@ def run_agent(
     try:
         for turn in range(1, cfg.max_turns + 1):
             try:
-                model_response = call_model(cfg, prompt, history, api_key)
+                model_response = call_model(
+                    cfg=cfg,
+                    prompt=prompt,
+                    history=history,
+                    api_key=api_key,
+                )
             except Exception as err:
                 if callbacks.on_issue:
                     callbacks.on_issue("model", str(err))
 
                 return 1
-            _append_turn_history(history, prompt, model_response)
+            _append_turn_history(
+                history=history,
+                prompt=prompt,
+                model_response=model_response,
+            )
 
             try:
                 parsed = parse_response(model_response)
@@ -467,10 +480,10 @@ def run_agent(
                 callbacks.on_reasoning(turn, parsed)
 
             terminal_output = _execute_turn_commands(
-                child,
-                parsed,
-                cfg.max_wait_seconds,
-                callbacks,
+                child=child,
+                parsed=parsed,
+                max_wait_seconds=cfg.max_wait_seconds,
+                callbacks=callbacks,
             )
 
             if parsed.task_complete:
@@ -479,11 +492,11 @@ def run_agent(
 
                 if pending_completion:
                     done_text = build_done_text(
-                        call_model,
-                        cfg,
-                        history,
-                        api_key,
-                        pending_final_message,
+                        call_model_fn=call_model,
+                        cfg=cfg,
+                        history=history,
+                        api_key=api_key,
+                        pending_final_message=pending_final_message,
                     )
                     if callbacks.on_done:
                         callbacks.on_done(done_text)

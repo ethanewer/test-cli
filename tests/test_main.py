@@ -74,7 +74,9 @@ class TestPromptParity(unittest.TestCase):
             instruction=instruction, terminal_state=terminal_state
         )
         actual = core_agent.build_prompt(
-            instruction, terminal_state, max_wait_seconds=60.0
+            instruction=instruction,
+            terminal_state=terminal_state,
+            max_wait_seconds=60.0,
         )
         self.assertEqual(actual, expected)
 
@@ -181,7 +183,9 @@ class TestExecutionAndLoop(unittest.TestCase):
         cmd = core_agent.Command(keystrokes="", duration=0.25)
         with patch("time.sleep") as sleep_mock:
             output = core_agent.execute_command(
-                _as_any(child), cmd, max_wait_seconds=60.0
+                child=_as_any(child),
+                cmd=cmd,
+                max_wait_seconds=60.0,
             )
         self.assertEqual(output, "")
         sleep_mock.assert_called_once_with(0.25)
@@ -193,7 +197,11 @@ class TestExecutionAndLoop(unittest.TestCase):
         child = FakeChild()
         child.before = "ok"
         cmd = core_agent.Command(keystrokes="echo hi\n", duration=0.1)
-        output = core_agent.execute_command(_as_any(child), cmd, max_wait_seconds=60.0)
+        output = core_agent.execute_command(
+            child=_as_any(child),
+            cmd=cmd,
+            max_wait_seconds=60.0,
+        )
         self.assertEqual(child.sendline_calls, ["echo hi"])
         self.assertEqual(child.send_calls, [])
         self.assertEqual(output, "ok")
@@ -214,20 +222,24 @@ class TestExecutionAndLoop(unittest.TestCase):
         )
 
         def fake_call_model(
-            cfg_arg: Any,
-            prompt_arg: str,
-            history_arg: list[dict[str, str]],
-            api_key_arg: str,
+            cfg: Any,
+            prompt: str,
+            history: list[dict[str, str]],
+            api_key: str,
         ) -> str:
-            del cfg_arg, history_arg, api_key_arg
-            prompts.append(prompt_arg)
+            del cfg, history, api_key
+            prompts.append(prompt)
             return next(responses)
 
         with (
             patch.object(core_agent, "start_shell", return_value=child),
             patch.object(core_agent, "call_model", side_effect=fake_call_model),
         ):
-            exit_code = core_agent.run_agent("do thing", cfg, api_key="k")
+            exit_code = core_agent.run_agent(
+                instruction="do thing",
+                cfg=cfg,
+                api_key="k",
+            )
 
         self.assertEqual(exit_code, 0)
         self.assertGreaterEqual(len(prompts), 4)

@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from typing import Any, Protocol
+
+
+class CallModelFn(Protocol):
+    def __call__(
+        self,
+        cfg: Any,
+        prompt: str,
+        history: list[dict[str, str]],
+        api_key: str,
+    ) -> str: ...
 
 
 def post_run_summary_prompt() -> str:
@@ -18,7 +28,7 @@ def post_run_summary_prompt() -> str:
 
 
 def build_done_text(
-    call_model_fn: Callable[[Any, str, list[dict[str, str]], str], str],
+    call_model_fn: CallModelFn,
     cfg: Any,
     history: list[dict[str, str]],
     api_key: str,
@@ -26,7 +36,12 @@ def build_done_text(
 ) -> str:
     response: str | None = None
     try:
-        response = call_model_fn(cfg, post_run_summary_prompt(), history, api_key)
+        response = call_model_fn(
+            cfg=cfg,
+            prompt=post_run_summary_prompt(),
+            history=history,
+            api_key=api_key,
+        )
     except Exception:
         response = None
 

@@ -170,19 +170,41 @@ def _render_command_output(
         console.print(Text("─" * width, style="dim"))
         in_line = Text(in_prefix, style="cyan")
         in_line.append(
-            _fit_line(preview or "<wait>", width, len(in_prefix)), style="white"
+            _fit_line(
+                text=preview or "<wait>",
+                width=width,
+                prefix_len=len(in_prefix),
+            ),
+            style="white",
         )
         console.print(in_line)
         out_line = Text(out_prefix, style="green")
         out_line.append(
-            _fit_line(response_preview, width, len(out_prefix)), style="white"
+            _fit_line(
+                text=response_preview,
+                width=width,
+                prefix_len=len(out_prefix),
+            ),
+            style="white",
         )
         console.print(out_line)
         return
 
     console.print(Text("─" * width, style="dim"))
-    _render_labeled_fixed(console, width, "cmd: ", "cyan", display_input)
-    _render_labeled_fixed(console, width, "out: ", "green", output_text)
+    _render_labeled_fixed(
+        console=console,
+        width=width,
+        label="cmd: ",
+        label_style="cyan",
+        content=display_input,
+    )
+    _render_labeled_fixed(
+        console=console,
+        width=width,
+        label="out: ",
+        label_style="green",
+        content=output_text,
+    )
 
 
 def _render_issue_output(
@@ -228,12 +250,14 @@ def main() -> None:
 
     if args.max_turns is not None:
         config.max_turns = max(1, args.max_turns)
+
     if args.verbosity is None:
         args.verbosity = config.verbosity
 
     instruction = " ".join(args.instruction).strip()
     if not instruction:
         instruction = Prompt.ask("[bold]Enter instruction[/bold]").strip()
+
     if not instruction:
         console.print(Panel("Instruction is required.", border_style="red"))
         raise SystemExit(1)
@@ -263,13 +287,22 @@ def main() -> None:
 
     callbacks = AgentCallbacks(
         on_reasoning=lambda turn, parsed: _render_response(
-            console, turn, parsed, args.verbosity
+            console=console,
+            turn=turn,
+            parsed=parsed,
+            verbosity=args.verbosity,
         ),
         on_command_output=lambda command, output: _render_command_output(
-            console, command, output, args.verbosity
+            console=console,
+            command=command,
+            output=output,
+            verbosity=args.verbosity,
         ),
         on_issue=lambda kind, message: _render_issue_output(
-            console, kind, message, args.verbosity
+            console=console,
+            kind=kind,
+            message=message,
+            verbosity=args.verbosity,
         ),
         on_done=lambda done_text: console.print(
             Panel(done_text, title="Done", border_style="green")
@@ -282,7 +315,14 @@ def main() -> None:
             )
         ),
     )
-    raise SystemExit(run_agent(instruction, config, api_key, callbacks=callbacks))
+    raise SystemExit(
+        run_agent(
+            instruction=instruction,
+            cfg=config,
+            api_key=api_key,
+            callbacks=callbacks,
+        )
+    )
 
 
 if __name__ == "__main__":
