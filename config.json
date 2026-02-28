@@ -11,8 +11,13 @@
       "api_base": "https://api.openai.com/v1",
       "api_key": "OPENAI_API_KEY"
     },
-    "nanbeige4.1-3b (lmstudio)": {
+    "nanbeige4.1-3b": {
       "model": "openai/nanbeige4.1-3b",
+      "api_base": "http://127.0.0.1:1234/v1",
+      "api_key": "OPENAI_API_KEY"
+    },
+    "qwen3-vl-8b": {
+      "model": "openai/qwen3-vl-8b",
       "api_base": "http://127.0.0.1:1234/v1",
       "api_key": "OPENAI_API_KEY"
     }
