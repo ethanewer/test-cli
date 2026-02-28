@@ -76,12 +76,18 @@ Current terminal state:
 
 
 @dataclass
-class Config:
+class ModelConfig:
     model: str
     api_base: str
     api_key: str | None = None
+    temperature: float | None = None
+
+
+@dataclass
+class Config:
+    active_model_key: str
+    active_model: ModelConfig
     verbosity: int = 1
-    temperature: float = 0.7
     max_turns: int = 50
     max_wait_seconds: float = 60.0
 
@@ -302,12 +308,16 @@ def call_model(
     history: list[dict[str, str]],
     api_key: str,
 ) -> str:
-    model_name = cfg.model
+    model_name = cfg.active_model.model
     completion_kwargs: dict[str, Any] = {}
-    if cfg.api_base.rstrip("/").endswith("openrouter.ai/api/v1"):
+    if cfg.active_model.api_base.rstrip("/").endswith("openrouter.ai/api/v1"):
         completion_kwargs["custom_llm_provider"] = "openrouter"
         if model_name.startswith("openrouter/"):
             model_name = model_name.removeprefix("openrouter/")
+
+    # Omit temperature when unset so provider defaults apply.
+    if cfg.active_model.temperature is not None:
+        completion_kwargs["temperature"] = cfg.active_model.temperature
 
     last_error: Exception | None = None
     for attempt in range(3):
@@ -319,9 +329,8 @@ def call_model(
             ):
                 result = completion(
                     model=model_name,
-                    api_base=cfg.api_base,
+                    api_base=cfg.active_model.api_base,
                     api_key=api_key,
-                    temperature=cfg.temperature,
                     messages=history + [{"role": "user", "content": prompt}],
                     **completion_kwargs,
                 )

@@ -209,7 +209,11 @@ class TestExecutionAndLoop(unittest.TestCase):
     def test_run_agent_uses_terminus2_parse_error_feedback_and_confirmation(
         self,
     ) -> None:
-        cfg = core_agent.Config(model="x", api_base="y", max_turns=6)
+        cfg = core_agent.Config(
+            active_model_key="test",
+            active_model=core_agent.ModelConfig(model="x", api_base="y"),
+            max_turns=6,
+        )
         child = FakeChild()
         prompts: list[str] = []
         responses = iter(
@@ -269,16 +273,18 @@ class TestFinalSummaryNormalization(unittest.TestCase):
 
 class TestResolveApiKey(unittest.TestCase):
     def test_resolve_api_key_prefers_literal_config_key(self) -> None:
-        with patch.dict("os.environ", {"OPENROUTER_API_KEY": "env-key"}, clear=True):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "env-key"}, clear=True):
             self.assertEqual(cli.resolve_api_key("literal-key"), "literal-key")
 
-    def test_resolve_api_key_uses_expanded_variable(self) -> None:
-        with patch.dict(
-            "os.environ", {"OPENROUTER_API_KEY": "expanded-key"}, clear=True
-        ):
-            self.assertEqual(cli.resolve_api_key("$OPENROUTER_API_KEY"), "expanded-key")
+    def test_resolve_api_key_uses_dollar_variable(self) -> None:
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "expanded-key"}, clear=True):
+            self.assertEqual(cli.resolve_api_key("$OPENAI_API_KEY"), "expanded-key")
 
-    def test_resolve_api_key_falls_back_to_subprocess(self) -> None:
+    def test_resolve_api_key_uses_variable_name_without_dollar(self) -> None:
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "named-key"}, clear=True):
+            self.assertEqual(cli.resolve_api_key("OPENAI_API_KEY"), "named-key")
+
+    def test_resolve_api_key_falls_back_to_subprocess_for_env_var(self) -> None:
         with patch.dict("os.environ", {}, clear=True):
             with patch("subprocess.run") as run_mock:
                 run_mock.return_value = subprocess.CompletedProcess(
@@ -287,7 +293,141 @@ class TestResolveApiKey(unittest.TestCase):
                     stdout="from-zsh",
                     stderr="",
                 )
-                self.assertEqual(cli.resolve_api_key(None), "from-zsh")
+                self.assertEqual(cli.resolve_api_key("OPENAI_API_KEY"), "from-zsh")
+
+
+class TestModelSelection(unittest.TestCase):
+    def test_resolve_model_key_uses_cli_model_when_provided(self) -> None:
+        loaded = cli.LoadedConfig(
+            default_model="a",
+            models={
+                "a": cli.ConfigModelEntry(
+                    model="model-a",
+                    api_base="https://example.com/v1",
+                    api_key="KEY_A",
+                    temperature=0.7,
+                ),
+                "b": cli.ConfigModelEntry(
+                    model="model-b",
+                    api_base="https://example.com/v1",
+                    api_key="KEY_B",
+                    temperature=0.7,
+                ),
+            },
+            verbosity=1,
+            max_turns=5,
+            max_wait_seconds=10.0,
+        )
+        self.assertEqual(
+            cli.resolve_model_key(
+                config=loaded, cli_model_key="b", selected_model_key=None
+            ),
+            "b",
+        )
+
+    def test_resolve_model_key_raises_for_unknown_cli_model(self) -> None:
+        loaded = cli.LoadedConfig(
+            default_model="a",
+            models={
+                "a": cli.ConfigModelEntry(
+                    model="model-a",
+                    api_base="https://example.com/v1",
+                    api_key="KEY_A",
+                    temperature=0.7,
+                )
+            },
+            verbosity=1,
+            max_turns=5,
+            max_wait_seconds=10.0,
+        )
+        with self.assertRaisesRegex(ValueError, "Unknown model key"):
+            cli.resolve_model_key(
+                config=loaded, cli_model_key="missing", selected_model_key=None
+            )
+
+
+class TestInteractiveCommands(unittest.TestCase):
+    def _loaded_config(self) -> Any:
+        return cli.LoadedConfig(
+            default_model="a",
+            models={
+                "a": cli.ConfigModelEntry(
+                    model="model-a",
+                    api_base="https://example.com/v1",
+                    api_key="KEY_A",
+                    temperature=0.7,
+                )
+            },
+            verbosity=1,
+            max_turns=5,
+            max_wait_seconds=10.0,
+        )
+
+    def test_parse_interactive_command_sets_verbosity_inline(self) -> None:
+        loaded = self._loaded_config()
+        result = cli.parse_interactive_command(
+            console=cli.Console(record=True),
+            instruction="/verbosity 3",
+            config=loaded,
+        )
+        self.assertTrue(result.handled)
+        self.assertEqual(result.updated_verbosity, 3)
+        self.assertEqual(result.instruction, "")
+
+    def test_parse_interactive_command_prompts_for_missing_verbosity(self) -> None:
+        loaded = self._loaded_config()
+        with patch.object(cli.Prompt, "ask", return_value="1"):
+            result = cli.parse_interactive_command(
+                console=cli.Console(record=True),
+                instruction="/verbosity",
+                config=loaded,
+            )
+        self.assertTrue(result.handled)
+        self.assertEqual(result.updated_verbosity, 1)
+
+    def test_parse_interactive_command_sets_max_turns(self) -> None:
+        loaded = self._loaded_config()
+        result = cli.parse_interactive_command(
+            console=cli.Console(record=True),
+            instruction="/max_turns 12",
+            config=loaded,
+        )
+        self.assertTrue(result.handled)
+        self.assertEqual(loaded.max_turns, 12)
+        self.assertIsNone(result.updated_verbosity)
+
+    def test_parse_interactive_command_sets_max_wait_seconds(self) -> None:
+        loaded = self._loaded_config()
+        with patch.object(cli.Prompt, "ask", return_value="2.5"):
+            result = cli.parse_interactive_command(
+                console=cli.Console(record=True),
+                instruction="/max_wait_seconds",
+                config=loaded,
+            )
+        self.assertTrue(result.handled)
+        self.assertAlmostEqual(loaded.max_wait_seconds, 2.5)
+
+    def test_parse_interactive_command_unknown_slash_command_is_handled(self) -> None:
+        loaded = self._loaded_config()
+        result = cli.parse_interactive_command(
+            console=cli.Console(record=True),
+            instruction="/unknown",
+            config=loaded,
+        )
+        self.assertTrue(result.handled)
+        self.assertEqual(result.instruction, "")
+
+    def test_parse_interactive_command_empty_input_shows_help_and_is_handled(
+        self,
+    ) -> None:
+        loaded = self._loaded_config()
+        result = cli.parse_interactive_command(
+            console=cli.Console(record=True),
+            instruction="",
+            config=loaded,
+        )
+        self.assertTrue(result.handled)
+        self.assertEqual(result.instruction, "")
 
 
 if __name__ == "__main__":

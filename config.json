@@ -1,0 +1,18 @@
+{
+  "default_model": "qwen3.5-35b-a3b",
+  "models": {
+    "qwen3.5-35b-a3b": {
+      "model": "qwen/qwen3.5-35b-a3b",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "OPENROUTER_API_KEY"
+    },
+    "gpt-5.3-codex": {
+      "model": "gpt-5.3-codex",
+      "api_base": "https://api.openai.com/v1",
+      "api_key": "OPENAI_API_KEY"
+    }
+  },
+  "verbosity": 0,
+  "max_turns": 50,
+  "max_wait_seconds": 60
+}

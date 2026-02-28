@@ -6,39 +6,46 @@ It runs commands in a persistent local shell and formats output with Rich.
 ## Requirements
 
 - Python 3.13+
-- OpenRouter API key exported in your shell:
+- API key(s) exported in your shell for any providers you configure:
 
 ```bash
 export OPENROUTER_API_KEY="your_key_here"
+export OPENAI_API_KEY="your_openai_key_here"
 ```
 
-The CLI reads the key from `OPENROUTER_API_KEY` (for example from your `.zshrc`).
+Each model can reference its own env var in config.
 
 ## Configuration
 
-Copy the example config and fill in local secrets:
-
-```bash
-cp config.example.json config.json
-```
-
-Model and API settings live in `config.json` (which is gitignored):
+Model settings live under `models` in the repository `config.json`.
+This file is tracked, so prefer env-var references for `api_key` values instead of literal secrets.
 
 ```json
 {
-  "model": "qwen/qwen3.5-35b-a3b",
-  "api_base": "https://openrouter.ai/api/v1",
-  "api_key": "$OPENROUTER_API_KEY",
-  "temperature": 0.7,
+  "default_model": "openrouter_qwen",
+  "models": {
+    "openrouter_qwen": {
+      "model": "qwen/qwen3.5-35b-a3b",
+      "api_base": "https://openrouter.ai/api/v1",
+      "api_key": "OPENROUTER_API_KEY"
+    },
+    "openai_codex": {
+      "model": "gpt-5.3-codex",
+      "api_base": "https://api.openai.com/v1",
+      "api_key": "OPENAI_API_KEY"
+    }
+  },
   "max_turns": 50,
   "max_wait_seconds": 60
 }
 ```
 
-- `model`: OpenRouter model name
-- `api_base`: OpenRouter API base URL
-- `api_key`: API key string or env reference like `$OPENROUTER_API_KEY`
-- `temperature`: sampling temperature
+- `default_model`: default model key to use from `models`
+- `models`: dict of named model profiles
+- model profile `model`: provider model ID (for example `gpt-5.3-codex`)
+- model profile `api_base`: provider base URL
+- model profile `api_key`: literal key, env var name (`OPENAI_API_KEY`), or `$ENV_VAR`
+- model profile `temperature` (optional): sampling temperature for that model; if omitted, provider defaults are used
 - `max_turns`: maximum model turns before stopping
 - `max_wait_seconds`: max time to wait for each tool call/command completion
 
@@ -67,7 +74,35 @@ terminus2-cli
 Optional flags:
 
 ```bash
-terminus2-cli --verbosity 1 --max-turns 10 --config ./config.json "Your instruction"
+terminus2-cli --verbosity 1 --max-turns 10 --model openai_codex --config ./config.json "Your instruction"
+```
+
+- `--model <key>` selects a model key from `config.models`.
+
+### Interactive Commands
+
+When entering instruction interactively, you can use slash commands before starting the run:
+
+- `/model`: choose a model from a numbered list.
+- `/verbosity [0|1|3]`: set runtime verbosity.
+- `/max_turns [N]`: set runtime max turns (`N >= 1`).
+- `/max_wait_seconds [S]`: set runtime max wait (`S > 0`).
+
+If you omit a value (for example, `/verbosity`), the CLI prompts you for one.
+
+Example:
+
+```bash
+terminus2-cli
+# Enter instruction: /model
+# Available Models:
+# 1. openrouter_qwen (...)
+# 2. openai_codex (...)
+# Enter model number: 2
+# Enter instruction: /max_turns 20
+# Enter instruction: /verbosity
+# Enter verbosity (0, 1, or 3): 1
+# Enter instruction: Diagnose failing tests
 ```
 
 ## Verbosity Levels
