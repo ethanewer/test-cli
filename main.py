@@ -111,6 +111,7 @@ def load_config(path: Path) -> Config:
 
 
 def limit_output_length(output: str, max_bytes: int = MAX_OUTPUT_BYTES) -> str:
+    """Trim very large terminal output while preserving head and tail context."""
     if len(output.encode("utf-8")) <= max_bytes:
         return output
 
@@ -130,6 +131,11 @@ def limit_output_length(output: str, max_bytes: int = MAX_OUTPUT_BYTES) -> str:
 
 
 def extract_json_content(response: str) -> str:
+    """Extract the first balanced top-level JSON object from model text output.
+
+    This scanner intentionally tracks quote/escape state so braces inside JSON
+    strings do not corrupt brace counting.
+    """
     json_start = -1
     json_end = -1
     brace_count = 0
@@ -187,19 +193,9 @@ def parse_response(text: str) -> ParsedResponse:
         duration = float(command.get("duration", 1.0))
         commands.append(Command(keystrokes=keystrokes, duration=min(duration, 60.0)))
 
-    task_complete = data.get("task_complete", False)
-    if isinstance(task_complete, str):
-        task_complete = task_complete.lower() in {"true", "1", "yes"}
-    elif not isinstance(task_complete, bool):
-        task_complete = False
+    task_complete = _coerce_task_complete(data.get("task_complete", False))
 
-    final_message_raw = data.get("final_message")
-    if final_message_raw is None:
-        final_message = None
-    elif isinstance(final_message_raw, str):
-        final_message = final_message_raw
-    else:
-        raise ValueError("'final_message' must be a string when provided")
+    final_message = _normalized_final_message(data.get("final_message"))
 
     return ParsedResponse(
         analysis=str(data["analysis"]),
@@ -208,6 +204,22 @@ def parse_response(text: str) -> ParsedResponse:
         task_complete=task_complete,
         final_message=final_message,
     )
+
+
+def _coerce_task_complete(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() in {"true", "1", "yes"}
+    return False
+
+
+def _normalized_final_message(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    raise ValueError("'final_message' must be a string when provided")
 
 
 def clean_terminal_output(output: str) -> str:
@@ -280,11 +292,13 @@ def call_model(
             model_name = model_name.removeprefix("openrouter/")
 
     last_error: Exception | None = None
-    for attempt in range(1, 4):
+    for attempt in range(3):
         try:
-            with suppress_stdio_fd(), contextlib.redirect_stdout(
-                io.StringIO()
-            ), contextlib.redirect_stderr(io.StringIO()):
+            with (
+                suppress_stdio_fd(),
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
                 result = completion(
                     model=model_name,
                     api_base=cfg.api_base,
@@ -301,9 +315,10 @@ def call_model(
             is_retryable = any(
                 token in message for token in ("429", "rate", "timeout", "temporarily")
             )
-            if is_retryable and attempt < 3:
-                time.sleep(2 * attempt)
+            if is_retryable and attempt < 2:
+                time.sleep(2 * (attempt + 1))
                 continue
+
             break
 
     raise RuntimeError(f"Model request failed: {last_error}")
@@ -351,10 +366,50 @@ def execute_command(child: pexpect.spawn, cmd: Command) -> str:
     return normalize_command_output(raw_output, cmd)
 
 
-def render_response(console: Console, turn: int, parsed: ParsedResponse, verbosity: int) -> None:
+def render_response(
+    console: Console, turn: int, parsed: ParsedResponse, verbosity: int
+) -> None:
     if verbosity >= 3:
         reasoning = f"analysis:\n{parsed.analysis}\n\nplan:\n{parsed.plan}"
-        console.print(Panel(reasoning, title=f"Turn {turn} Reasoning", border_style="magenta"))
+        console.print(
+            Panel(reasoning, title=f"Turn {turn} Reasoning", border_style="magenta")
+        )
+
+
+def _display_width(console: Console) -> int:
+    return max(90, min(140, console.width - 2))
+
+
+def _render_labeled_fixed(
+    console: Console, width: int, label: str, label_style: str, content: str
+) -> None:
+    content_width = max(10, width - len(label))
+    lines = content.splitlines() or [""]
+    first = True
+
+    for raw_line in lines:
+        wrapped = textwrap.wrap(
+            raw_line,
+            width=content_width,
+            replace_whitespace=False,
+            drop_whitespace=False,
+        )
+        if not wrapped:
+            wrapped = [""]
+
+        for segment in wrapped:
+            prefix = label if first else (" " * len(label))
+            line = Text(prefix, style=label_style)
+            line.append(segment.ljust(content_width), style="white")
+            console.print(line)
+            first = False
+
+
+def _fit_line(text: str, width: int, prefix_len: int) -> str:
+    content_width = max(10, width - prefix_len)
+    if len(text) > content_width:
+        return text[: content_width - 3] + "..."
+    return text.ljust(content_width)
 
 
 def render_command_output(
@@ -362,32 +417,8 @@ def render_command_output(
     command: Command,
     output: str,
     verbosity: int,
-    command_index: int,
 ) -> None:
-    _ = command_index
-    width = max(90, min(140, console.width - 2))
-
-    def render_labeled_fixed(label: str, label_style: str, content: str) -> None:
-        content_width = max(10, width - len(label))
-        lines = content.splitlines() or [""]
-        first = True
-
-        for raw_line in lines:
-            wrapped = textwrap.wrap(
-                raw_line,
-                width=content_width,
-                replace_whitespace=False,
-                drop_whitespace=False,
-            )
-            if not wrapped:
-                wrapped = [""]
-
-            for segment in wrapped:
-                prefix = label if first else (" " * len(label))
-                line = Text(prefix, style=label_style)
-                line.append(segment.ljust(content_width), style="white")
-                console.print(line)
-                first = False
+    width = _display_width(console)
 
     if command.keystrokes == "":
         input_text = "<wait>"
@@ -395,6 +426,7 @@ def render_command_output(
         input_text = "<enter>"
     else:
         input_text = command.keystrokes
+
     display_input = input_text.replace("\n", "\\n")
     normalized_output = output.strip() if output else ""
     output_text = normalized_output if normalized_output else "[no output]"
@@ -403,34 +435,34 @@ def render_command_output(
         in_prefix = "in: "
         out_prefix = "out: "
 
-        def fit_line(text: str, prefix_len: int) -> str:
-            content_width = max(10, width - prefix_len)
-            if len(text) > content_width:
-                return text[: content_width - 3] + "..."
-            return text.ljust(content_width)
-
         preview = display_input
         response_preview = output_text.replace("\n", " ")
         console.print(Text("─" * width, style="dim"))
         in_line = Text(in_prefix, style="cyan")
-        in_line.append(fit_line(preview or "<wait>", len(in_prefix)), style="white")
+        in_line.append(
+            _fit_line(preview or "<wait>", width, len(in_prefix)), style="white"
+        )
         console.print(in_line)
         out_line = Text(out_prefix, style="green")
-        out_line.append(fit_line(response_preview, len(out_prefix)), style="white")
+        out_line.append(
+            _fit_line(response_preview, width, len(out_prefix)), style="white"
+        )
         console.print(out_line)
         return
 
     console.print(Text("─" * width, style="dim"))
-    render_labeled_fixed("cmd: ", "cyan", display_input)
-    render_labeled_fixed("out: ", "green", output_text)
+    _render_labeled_fixed(console, width, "cmd: ", "cyan", display_input)
+    _render_labeled_fixed(console, width, "out: ", "green", output_text)
 
 
-def render_issue_output(console: Console, kind: str, message: str, verbosity: int) -> None:
+def render_issue_output(
+    console: Console, kind: str, message: str, verbosity: int
+) -> None:
     # Keep verbosity 0 very compact by hiding parser/model issue chatter.
     if verbosity == 0:
         return
 
-    width = max(90, min(140, console.width - 2))
+    width = _display_width(console)
     content_width = max(10, width - len("details: "))
     details_text = message.replace("\n", " ")
     wrapped = textwrap.wrap(
@@ -483,14 +515,54 @@ def get_post_run_final_message(
     return response or None
 
 
-def run_agent(console: Console, instruction: str, cfg: Config, verbosity: int, api_key: str) -> int:
+def _append_turn_history(
+    history: list[dict[str, str]], prompt: str, model_response: str
+) -> None:
+    history.extend(
+        [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": model_response},
+        ]
+    )
+
+
+def _execute_turn_commands(
+    console: Console, child: pexpect.spawn, parsed: ParsedResponse, verbosity: int
+) -> str:
+    combined_output_parts: list[str] = []
+    for cmd in parsed.commands:
+        output = execute_command(child, cmd)
+        render_command_output(console, cmd, output, verbosity)
+        if output:
+            combined_output_parts.append(output)
+
+    terminal_output = "\n".join(combined_output_parts).strip()
+    return limit_output_length(terminal_output or "[no new output]")
+
+
+def _done_text_from_history(
+    cfg: Config,
+    history: list[dict[str, str]],
+    api_key: str,
+    pending_final_message: str | None,
+) -> str:
+    post_run_message = get_post_run_final_message(cfg, history, api_key)
+    if post_run_message:
+        return post_run_message
+    if pending_final_message:
+        return pending_final_message
+    return "Task marked complete (double-confirmed)."
+
+
+def run_agent(
+    console: Console, instruction: str, cfg: Config, verbosity: int, api_key: str
+) -> int:
     child = start_shell()
     history: list[dict[str, str]] = []
     pending_completion = False
     pending_final_message: str | None = None
     terminal_state = "Current Terminal Screen:\n(empty)"
     prompt = build_prompt(instruction, terminal_state)
-    command_counter = 0
 
     try:
         for turn in range(1, cfg.max_turns + 1):
@@ -499,12 +571,7 @@ def run_agent(console: Console, instruction: str, cfg: Config, verbosity: int, a
             except Exception as err:
                 render_issue_output(console, "model", str(err), verbosity)
                 return 1
-            history.extend(
-                [
-                    {"role": "user", "content": prompt},
-                    {"role": "assistant", "content": model_response},
-                ]
-            )
+            _append_turn_history(history, prompt, model_response)
 
             try:
                 parsed = parse_response(model_response)
@@ -518,29 +585,15 @@ def run_agent(console: Console, instruction: str, cfg: Config, verbosity: int, a
                 continue
 
             render_response(console, turn, parsed, verbosity)
-
-            combined_output_parts: list[str] = []
-            for cmd in parsed.commands:
-                command_counter += 1
-                output = execute_command(child, cmd)
-                render_command_output(console, cmd, output, verbosity, command_counter)
-                if output:
-                    combined_output_parts.append(output)
-
-            terminal_output = "\n".join(combined_output_parts).strip()
-            terminal_output = limit_output_length(terminal_output or "[no new output]")
+            terminal_output = _execute_turn_commands(console, child, parsed, verbosity)
 
             if parsed.task_complete:
                 if parsed.final_message and parsed.final_message.strip():
                     pending_final_message = parsed.final_message.strip()
+
                 if pending_completion:
-                    post_run_message = get_post_run_final_message(cfg, history, api_key)
-                    done_text = (
-                        post_run_message
-                        if post_run_message
-                        else pending_final_message
-                        if pending_final_message
-                        else "Task marked complete (double-confirmed)."
+                    done_text = _done_text_from_history(
+                        cfg, history, api_key, pending_final_message
                     )
                     console.print(
                         Panel(
@@ -620,7 +673,7 @@ def resolve_api_key(config_api_key: str | None) -> str | None:
             [
                 "zsh",
                 "-ic",
-                "source ~/.zshrc >/dev/null 2>&1; printf %s \"$OPENROUTER_API_KEY\"",
+                'source ~/.zshrc >/dev/null 2>&1; printf %s "$OPENROUTER_API_KEY"',
             ],
             capture_output=True,
             text=True,
@@ -645,6 +698,7 @@ def main() -> None:
 
     if args.max_turns is not None:
         config.max_turns = max(1, args.max_turns)
+
     if args.verbosity is None:
         args.verbosity = config.verbosity
 
