@@ -1,0 +1,14 @@
+[project]
+name = "test-cli"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "litellm",
+    "pexpect",
+    "rich",
+]
+
+[project.scripts]
+terminus2-cli = "main:main"
